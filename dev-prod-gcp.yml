@@ -1,0 +1,101 @@
+name: Terragrunt workflow
+
+on:
+  push:
+    branches:
+      - prod
+  pull_request:
+    branches:
+      - dev
+    types:
+      - closed
+
+env:
+  tf_version: '1.4.4'
+  tg_version: '0.43.2'
+
+jobs:
+  checks:
+    environment: 
+      name: ${{ github.event.pull_request ? 'my-dev' : 'my-prod' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'Checkout'
+        uses: actions/checkout@v2
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Google Auth
+        uses: "google-github-actions/auth@v1"
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Terraform validation
+        uses: gruntwork-io/terragrunt-action@v1
+        with:
+          tf_version: ${{ env.tf_version }}
+          tg_version: ${{ env.tg_version }}
+          tg_command: 'validate'
+
+  plan:
+    needs: [checks]
+    environment: 
+      name: ${{ github.event.pull_request ? 'my-dev' : 'my-prod' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'Checkout'
+        uses: actions/checkout@v2
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Google Auth
+        uses: "google-github-actions/auth@v1"
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Plan
+        uses: gruntwork-io/terragrunt-action@v1
+        with:
+          tf_version: ${{ env.tf_version }}
+          tg_version: ${{ env.tg_version }}
+          tg_command: 'plan'
+
+      - name: Upload plan as artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: plan
+          path: plan.out
+
+  deploy:
+    if: github.event_name == 'workflow_dispatch'
+    needs: [plan]
+    environment: 
+      name: ${{ github.event.pull_request ? 'my-dev' : 'my-prod' }}
+      url: ${{ steps.deploy.outputs.url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'Checkout'
+        uses: actions/checkout@v2
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Google Auth
+        uses: "google-github-actions/auth@v1"
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Download plan
+        uses: actions/download-artifact@v2
+        with:
+          name: plan
+
+      - name: Apply
+        uses: gruntwork-io/terragrunt-action@v1
+        with:
+          tf_version: ${{ env.tf_version }}
+          tg_version: ${{ env.tg_version }}
+          tg_command: 'apply'
+          tg_args: '-auto-approve plan.out'
